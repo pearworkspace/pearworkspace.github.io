@@ -781,13 +781,16 @@ button { cursor: pointer; border: none; background: none; font-family: inherit; 
 .data-table-wrapper {
   border-radius: 16px;
   border: 1px solid var(--border);
-  overflow: hidden;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   background: var(--white);
+  box-shadow: 0 4px 20px -4px rgba(7,60,100,0.06);
 }
 .data-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 14px;
+  min-width: 900px;
 }
 .data-table thead {
   background: var(--surface);
@@ -795,16 +798,18 @@ button { cursor: pointer; border: none; background: none; font-family: inherit; 
 }
 .data-table th {
   text-align: left;
-  padding: 16px 24px;
+  padding: 16px 20px;
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--muted);
+  white-space: nowrap;
 }
 .data-table td {
-  padding: 16px 24px;
+  padding: 16px 20px;
   border-bottom: 1px solid rgba(226,232,240,0.5);
+  vertical-align: top;
 }
 .data-table tbody tr {
   transition: background 0.2s;
@@ -816,8 +821,28 @@ button { cursor: pointer; border: none; background: none; font-family: inherit; 
   border-bottom: none;
 }
 .data-table .td-title {
-  font-weight: 500;
+  font-weight: 600;
   color: var(--navy);
+  line-height: 1.5;
+  min-width: 240px;
+}
+.data-table .td-pic {
+  font-weight: 500;
+  color: var(--blue);
+  min-width: 180px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.data-table .td-anggota {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+  min-width: 220px;
+}
+.data-table .anggota-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
 .badge {
@@ -1200,12 +1225,13 @@ button { cursor: pointer; border: none; background: none; font-family: inherit; 
             <table class="data-table">
                 <thead>
                     <tr>
-                        <th>No</th>
+                        <th style="width: 50px;">No</th>
                         <th>Judul</th>
-                        <th class="hide-mobile">Peneliti</th>
-                        <th class="hide-mobile">Tahun</th>
-                        <th>Kategori</th>
-                        <th>Status</th>
+                        <th>PIC</th>
+                        <th class="hide-mobile">Anggota Peneliti</th>
+                        <th class="hide-mobile" style="width: 80px;">Tahun</th>
+                        <th style="width: 130px;">Kategori</th>
+                        <th style="width: 130px;">Status</th>
                     </tr>
                 </thead>
                 <tbody id="riset-tbody">
@@ -1599,30 +1625,65 @@ const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export
 let risetData = [];
 
 function parseCSV(csv) {
-  const lines = csv.split('\n').filter(l => l.trim());
-  if (lines.length < 2) return [];
-  // Skip header row
-  return lines.slice(1).map((line, idx) => {
-    // Handle quoted fields with commas inside
-    const cols = [];
-    let current = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') { inQuotes = !inQuotes; }
-      else if (ch === ',' && !inQuotes) { cols.push(current.trim()); current = ''; }
-      else { current += ch; }
+  const rows = [];
+  let currentRow = [];
+  let currentVal = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < csv.length; i++) {
+    const ch = csv[i];
+    const nextCh = csv[i + 1];
+
+    if (ch === '"') {
+      if (inQuotes && nextCh === '"') {
+        currentVal += '"';
+        i++; // skip escaped quote
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === ',' && !inQuotes) {
+      currentRow.push(currentVal.trim());
+      currentVal = '';
+    } else if ((ch === '\r' || ch === '\n') && !inQuotes) {
+      if (ch === '\r' && nextCh === '\n') i++;
+      currentRow.push(currentVal.trim());
+      if (currentRow.some(val => val !== '')) {
+        rows.push(currentRow);
+      }
+      currentRow = [];
+      currentVal = '';
+    } else {
+      currentVal += ch;
     }
-    cols.push(current.trim());
+  }
+  if (currentVal || currentRow.length > 0) {
+    currentRow.push(currentVal.trim());
+    if (currentRow.some(val => val !== '')) {
+      rows.push(currentRow);
+    }
+  }
+
+  if (rows.length < 2) return [];
+
+  // Skip header row
+  return rows.slice(1).map((cols, idx) => {
     return {
       no: cols[0] || (idx + 1),
       judul: cols[1] || '-',
-      peneliti: cols[2] || '-',
-      tahun: cols[3] || '-',
-      kategori: cols[4] || '-',
-      status: cols[5] || '-'
+      pic: cols[2] || '-',
+      anggota: cols[3] || '-',
+      tahun: cols[4] || '-',
+      kategori: cols[5] || '-',
+      status: cols[6] || '-'
     };
   });
+}
+
+function formatAnggota(text) {
+  if (!text || text === '-') return '-';
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length <= 1) return text;
+  return `<div class="anggota-list">${lines.map(l => `<div>${l}</div>`).join('')}</div>`;
 }
 
 async function fetchSheetData() {
@@ -1646,8 +1707,8 @@ function initResearchTable() {
 
   let activeFilter = 'Semua';
 
-  // Show loading state
-  tbody.innerHTML = `<tr><td colspan="6" class="empty-state">Memuat data dari spreadsheet...</td></tr>`;
+  // Show loading state (7 columns)
+  tbody.innerHTML = `<tr><td colspan="7" class="empty-state">Memuat data dari spreadsheet...</td></tr>`;
 
   fetchSheetData().then(() => {
     // Build dynamic filter pills from unique categories
@@ -1686,7 +1747,10 @@ function initResearchTable() {
       const matchCat = activeFilter === 'Semua' || d.kategori === activeFilter;
       const matchSearch = !query ||
         d.judul.toLowerCase().includes(query) ||
-        d.peneliti.toLowerCase().includes(query);
+        d.pic.toLowerCase().includes(query) ||
+        d.anggota.toLowerCase().includes(query) ||
+        d.kategori.toLowerCase().includes(query) ||
+        String(d.tahun).toLowerCase().includes(query);
       return matchCat && matchSearch;
     });
 
@@ -1698,25 +1762,35 @@ function initResearchTable() {
     });
 
     if (filtered.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6" class="empty-state">Tidak ada data yang cocok.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" class="empty-state">Tidak ada data yang cocok.</td></tr>`;
       return;
     }
 
-    tbody.innerHTML = filtered.map(row => `
-      <tr>
-        <td>${row.no}</td>
-        <td class="td-title">${row.judul}</td>
-        <td class="hide-mobile">${row.peneliti}</td>
-        <td class="hide-mobile">${row.tahun}</td>
-        <td><span class="badge badge-kategori">${row.kategori}</span></td>
-        <td>
-          <span class="badge ${row.status === 'Selesai' ? 'badge-selesai' : 'badge-berlangsung'}">
-            ${row.status === 'Berlangsung' ? '<span class="badge-pulse"></span>' : ''}
-            ${row.status}
-          </span>
-        </td>
-      </tr>
-    `).join('');
+    tbody.innerHTML = filtered.map(row => {
+      const statusLower = (row.status || '').toLowerCase();
+      let statusBadge = '';
+      if (statusLower === 'selesai') {
+        statusBadge = `<span class="badge badge-selesai">${row.status}</span>`;
+      } else if (statusLower === 'berlangsung') {
+        statusBadge = `<span class="badge badge-berlangsung"><span class="badge-pulse"></span>${row.status}</span>`;
+      } else if (row.status && row.status !== '-') {
+        statusBadge = `<span class="badge badge-kategori">${row.status}</span>`;
+      } else {
+        statusBadge = `<span class="badge badge-kategori">-</span>`;
+      }
+
+      return `
+        <tr>
+          <td>${row.no}</td>
+          <td class="td-title">${row.judul}</td>
+          <td class="td-pic">${row.pic}</td>
+          <td class="td-anggota hide-mobile">${formatAnggota(row.anggota)}</td>
+          <td class="hide-mobile">${row.tahun}</td>
+          <td><span class="badge badge-kategori">${row.kategori}</span></td>
+          <td>${statusBadge}</td>
+        </tr>
+      `;
+    }).join('');
   }
 
   // Search input
